@@ -51,9 +51,10 @@ func HasRecentAuthentication(current accounts.CurrentSession, now time.Time) boo
 
 func SetCookie(responseWriter http.ResponseWriter, session accounts.Session) {
 	http.SetCookie(responseWriter, &http.Cookie{
-		Name:  CookieName,
-		Value: session.Token,
-		Path:  "/",
+		Name:    CookieName,
+		Value:   session.Token,
+		Path:    "/",
+		Expires: session.ExpiresAt,
 	})
 }
 
