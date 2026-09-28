@@ -95,6 +95,21 @@ func (handler *Handler) Products(responseWriter http.ResponseWriter, request *ht
 }
 
 func (handler *Handler) WarehouseOrders(responseWriter http.ResponseWriter, request *http.Request) {
+	headerKey := request.Header.Get("X-API-Key")
+	apiKey, found, err := handler.apiStore.FindKey(request.Context(), headerKey)
+	if err != nil { // check for db errors first so we don't mistakenly send a 401/403
+		handler.internalError(responseWriter, request, err)
+		return
+	}
+	if !found {
+		httpx.RespondWithJSON(responseWriter, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+		return
+	}
+	if apiKey.Scope != "orders:read" { // ensure the key is valid for reading from orders and not something else
+		httpx.RespondWithJSON(responseWriter, http.StatusForbidden, map[string]string{"error": "Forbidden"})
+		return
+	}
+
 	orders, err := handler.orderStore.ListAll(request.Context())
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
