@@ -129,7 +129,44 @@ func verifyAt(code, secret string, timestamp time.Time) bool {
 }
 
 func (store *Store) VerifyAndConsume(ctx context.Context, userID int64, code, secret string) (bool, error) {
-	return verifyAt(code, secret, store.now()), nil
+	currentTime := store.now()
+
+	// Verify the TOTP (time-based one-time password) code
+	ok := verifyAt(code, secret, currentTime)
+	if !ok {
+		return false, nil
+	}
+
+	// After verifying the TOTP code we need to decide
+	// whether or not to consume it based on whether or not
+	// the time step has already been marked for this user in the database.
+	timeStep := currentTime.Unix() / totpPeriodSeconds
+	record, err := store.queries.ConsumeTOTPStep(ctx, dbgen.ConsumeTOTPStepParams{
+		TimeStep: &timeStep,
+		UserID:   userID,
+	})
+	if err != nil {
+		return false, err
+	}
+
+	// If a row has been affected by the query,
+	// we know the last time step has been updated for this user,
+	// therefore we allow the TOTP code consumption.
+	// Note: RowsAffected only checks the record (sql.Result) for that specific query,
+	//		 and therefore only checks if the row for this user is affected.
+	//		 It does not check all rows in the table.
+	numRowsAffected, err := record.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	// If the last time step was not updated in the database,
+	// it means that this time step has already been marked as used,
+	// i.e. this time step is not strictly newer than the last recorded time step for this user.
+	// Therefore, we reject the TOTP code because it has already been used in this time step.
+	if numRowsAffected != 1 {
+		return false, nil
+	}
+	return true, nil
 }
 
 func (store *Store) ConfirmEnrollment(ctx context.Context, userID int64) ([]string, error) {
