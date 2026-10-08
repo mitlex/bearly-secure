@@ -82,7 +82,7 @@
         <p class="rating" aria-label="{{.Rating}} out of 5 stars">
           {{stars .Rating}}{{emptyStars .Rating}}
         </p>
-        <p>{{.BodyHTML}}</p>
+        <p>{{.Body}}</p>
         {{if .CanEdit}}<a href="/account/reviews/{{.ID}}/edit"
           >Edit your review</a
         >{{end}}
