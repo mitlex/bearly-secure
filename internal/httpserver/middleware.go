@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -34,6 +35,35 @@ func noSniffMiddleware(handler http.Handler) http.Handler {
 		responseWriter.Header().Set("X-Content-Type-Options", "nosniff")
 		handler.ServeHTTP(responseWriter, request)
 	})
+}
+
+func globalSourceValidationMiddleware(appOrigin string, renderer *templates.Renderer) middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+			if request.Method != http.MethodPost {
+				next.ServeHTTP(responseWriter, request)
+				return
+			}
+			trusted := false
+			requestOrigin := request.Header.Get("Origin")
+			if requestOrigin == appOrigin {
+				trusted = true
+			}
+			if requestOrigin == "" {
+				refererURL, err := url.Parse(request.Header.Get("Referer"))
+				if err == nil && appOrigin == refererURL.Scheme+"://"+refererURL.Host {
+					trusted = true
+				}
+			}
+			if trusted {
+				next.ServeHTTP(responseWriter, request)
+				return
+			}
+			if err := httpx.RespondWithErrorPage(responseWriter, renderer, http.StatusForbidden, "Request Blocked", "We couldn't verify that this request came from Bearly Secure"); err != nil {
+				http.Error(responseWriter, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
+		})
+	}
 }
 
 func permissiveCORS(next http.Handler) http.Handler {
