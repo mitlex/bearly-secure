@@ -39,9 +39,10 @@ func noSniffMiddleware(handler http.Handler) http.Handler {
 
 func contentSecurityPolicyMiddleware(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+		nonce := httpx.CSPNonce(request.Context())
 		responseWriter.Header().Set(
 			"Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'")
+			fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; img-src 'self' data:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'", nonce))
 		handler.ServeHTTP(responseWriter, request)
 	})
 }
