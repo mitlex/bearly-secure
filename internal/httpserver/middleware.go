@@ -44,6 +44,7 @@ func contentSecurityPolicyMiddleware(handler http.Handler) http.Handler {
 			"Content-Security-Policy",
 			fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'", nonce))
 		responseWriter.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		responseWriter.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		handler.ServeHTTP(responseWriter, request)
 	})
 }
