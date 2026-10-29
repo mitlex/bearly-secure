@@ -42,7 +42,8 @@ func contentSecurityPolicyMiddleware(handler http.Handler) http.Handler {
 		nonce := httpx.CSPNonce(request.Context())
 		responseWriter.Header().Set(
 			"Content-Security-Policy",
-			fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; img-src 'self' data:; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'", nonce))
+			fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'", nonce))
+		responseWriter.Header().Set("X-Frame-Options", "SAMEORIGIN")
 		handler.ServeHTTP(responseWriter, request)
 	})
 }
