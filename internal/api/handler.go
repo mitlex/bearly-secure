@@ -86,12 +86,19 @@ func (handler *Handler) Order(responseWriter http.ResponseWriter, request *http.
 }
 
 func (handler *Handler) Products(responseWriter http.ResponseWriter, request *http.Request) {
+	responseWriter.Header().Set("Access-Control-Allow-Origin", "*")
 	products, err := handler.productStore.ListAllProducts(request.Context())
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
 		return
 	}
 	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{"products": products})
+}
+
+func (handler *Handler) ProductsPreflight(responseWriter http.ResponseWriter, _ *http.Request) {
+	responseWriter.Header().Set("Access-Control-Allow-Origin", "*")
+	responseWriter.Header().Set("Access-Control-Allow-Methods", "GET")
+	responseWriter.WriteHeader(http.StatusNoContent)
 }
 
 func (handler *Handler) WarehouseOrders(responseWriter http.ResponseWriter, request *http.Request) {
