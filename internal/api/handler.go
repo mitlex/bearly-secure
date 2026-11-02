@@ -11,17 +11,25 @@ import (
 	"github.com/bootdotdev/learn-web-security/internal/storefront"
 )
 
-type integrationOrderResponse struct {
+type orderItemResponse struct {
+	ProductID   int64  `json:"product_id"`
+	ProductName string `json:"product_name"`
+	Quantity    int64  `json:"quantity"`
+	PriceCents  int64  `json:"price_cents"`
+}
+
+type orderResponse struct {
 	ID         int64  `json:"id"`
 	Status     string `json:"status"`
 	TotalCents int64  `json:"total_cents"`
 	CreatedAt  string `json:"created_at"`
 }
 
-type orderItemResponse struct {
-	ProductID   int64  `json:"product_id"`
-	ProductName string `json:"product_name"`
-	Quantity    int64  `json:"quantity"`
+type productResponse struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ImagePath   string `json:"image_path"`
 	PriceCents  int64  `json:"price_cents"`
 }
 
@@ -51,7 +59,11 @@ func (handler *Handler) AccountOrders(responseWriter http.ResponseWriter, reques
 		handler.internalError(responseWriter, request, err)
 		return
 	}
-	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{"orders": orders})
+	responses := make([]orderResponse, 0, len(orders))
+	for _, o := range orders {
+		responses = append(responses, toOrderResponse(o))
+	}
+	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{"orders": responses})
 }
 
 func (handler *Handler) Order(responseWriter http.ResponseWriter, request *http.Request) {
@@ -78,21 +90,41 @@ func (handler *Handler) Order(responseWriter http.ResponseWriter, request *http.
 		handler.internalError(responseWriter, request, err)
 		return
 	}
+	response := toOrderResponse(order)
 	itemResponses := make([]orderItemResponse, 0, len(items))
 	for _, item := range items {
 		itemResponses = append(itemResponses, orderItemResponse{ProductID: item.ProductID, ProductName: item.ProductName, Quantity: item.Quantity, PriceCents: item.PriceCents})
 	}
-	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{"order": order, "items": itemResponses})
+	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{"order": response, "items": itemResponses})
+}
+
+func toOrderResponse(order orders.Order) orderResponse {
+	return orderResponse{
+		ID:         order.ID,
+		Status:     order.Status,
+		TotalCents: order.TotalCents,
+		CreatedAt:  order.CreatedAt,
+	}
 }
 
 func (handler *Handler) Products(responseWriter http.ResponseWriter, request *http.Request) {
 	responseWriter.Header().Set("Access-Control-Allow-Origin", "*")
-	products, err := handler.productStore.ListAllProducts(request.Context())
+	products, err := handler.productStore.ListProducts(request.Context(), handler.maxProductResults)
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
 		return
 	}
-	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{"products": products})
+	responses := make([]productResponse, 0, len(products))
+	for _, p := range products {
+		responses = append(responses, productResponse{
+			ID:          p.ID,
+			Name:        p.Name,
+			Description: p.Description,
+			ImagePath:   p.ImagePath,
+			PriceCents:  p.PriceCents,
+		})
+	}
+	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{"products": responses})
 }
 
 func (handler *Handler) ProductsPreflight(responseWriter http.ResponseWriter, _ *http.Request) {
@@ -116,17 +148,14 @@ func (handler *Handler) WarehouseOrders(responseWriter http.ResponseWriter, requ
 		httpx.RespondWithJSON(responseWriter, http.StatusForbidden, map[string]string{"error": "Forbidden"})
 		return
 	}
-
 	orders, err := handler.orderStore.ListAll(request.Context())
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
 		return
 	}
-	responses := make([]integrationOrderResponse, 0, len(orders))
+	responses := make([]orderResponse, 0, len(orders))
 	for _, order := range orders {
-		responses = append(responses, integrationOrderResponse{
-			ID: order.ID, Status: order.Status, TotalCents: order.TotalCents, CreatedAt: order.CreatedAt,
-		})
+		responses = append(responses, toOrderResponse(order))
 	}
 	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{
 		"integration": "Warehouse Fulfillment Integration",
