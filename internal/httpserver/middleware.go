@@ -30,21 +30,29 @@ func applyMiddleware(handler http.Handler, middlewareChain ...middleware) http.H
 	return handler
 }
 
-func noSniffMiddleware(handler http.Handler) http.Handler {
+func securityHeaders(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
-		responseWriter.Header().Set("X-Content-Type-Options", "nosniff")
+		nonce := httpx.CSPNonce(request.Context())
+		responseWriter.Header().Set(
+			"Content-Security-Policy", // one layer of defense against XSS by restricting allowed script/style/resource sources
+			fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'", nonce))
+		responseWriter.Header().Set("X-Frame-Options", "SAMEORIGIN")                      // prevents clickjacking via iframe embedding
+		responseWriter.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin") // limits URL info leaked in Referer header
+		responseWriter.Header().Set("X-Content-Type-Options", "nosniff")                  // stops MIME-type sniffing attacks
+		responseWriter.Header().Set("Cross-Origin-Opener-Policy", "same-origin")          // isolates browsing context from cross-origin openers
+		responseWriter.Header().Set("Cross-Origin-Resource-Policy", "same-origin")        // blocks other origins from loading Bearly Secure's resources
+		responseWriter.Header().Set("Origin-Agent-Cluster", "?1")                         // requests origin-keyed process isolation
+		responseWriter.Header().Set("X-DNS-Prefetch-Control", "off")                      // disables speculative DNS prefetching
+		responseWriter.Header().Set("X-Download-Options", "noopen")                       // (legacy IE) forces save instead of auto-open on download
+		responseWriter.Header().Set("X-Permitted-Cross-Domain-Policies", "none")          // (legacy Flash/PDF) blocks cross-domain policy files
+		responseWriter.Header().Set("X-XSS-Protection", "0")                              // disables obsolete/unreliable browser XSS filter
 		handler.ServeHTTP(responseWriter, request)
 	})
 }
 
-func contentSecurityPolicyMiddleware(handler http.Handler) http.Handler {
+func allowCrossOriginWidgetAssets(handler http.Handler) http.Handler {
 	return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
-		nonce := httpx.CSPNonce(request.Context())
-		responseWriter.Header().Set(
-			"Content-Security-Policy",
-			fmt.Sprintf("default-src 'self'; script-src 'self' 'nonce-%s'; style-src 'self'; img-src 'self' data:; frame-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'; form-action 'self'", nonce))
-		responseWriter.Header().Set("X-Frame-Options", "SAMEORIGIN")
-		responseWriter.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		responseWriter.Header().Set("Cross-Origin-Resource-Policy", "cross-origin") // enables other origins to load Bearly Secure's resources
 		handler.ServeHTTP(responseWriter, request)
 	})
 }
