@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 const (
@@ -36,6 +38,7 @@ type Config struct {
 	MaxPublicProductResults    int
 	ActiveEncryptionKeyVersion string
 	EncryptionKeys             map[string][32]byte
+	DownloadSigningKey         [32]byte
 }
 
 type AttackerLabConfig struct {
@@ -51,11 +54,19 @@ func requireEnvironmentVariable(environment map[string]string, name string) (str
 }
 
 func Load(workingDirectory string) (Config, error) {
-	return Parse(processEnvironment(), workingDirectory)
+	environment, err := loadEnvironment(workingDirectory)
+	if err != nil {
+		return Config{}, err
+	}
+	return Parse(environment, workingDirectory)
 }
 
 func LoadAttackerLab(workingDirectory string) (AttackerLabConfig, error) {
-	return ParseAttackerLab(processEnvironment())
+	environment, err := loadEnvironment(workingDirectory)
+	if err != nil {
+		return AttackerLabConfig{}, err
+	}
+	return ParseAttackerLab(environment)
 }
 
 func Parse(environment map[string]string, workingDirectory string) (Config, error) {
@@ -91,6 +102,15 @@ func Parse(environment map[string]string, workingDirectory string) (Config, erro
 		return Config{}, err
 	}
 
+	downloadSigningKeyEnvVar, err := requireEnvironmentVariable(environment, "DOWNLOAD_SIGNING_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+	downloadSigningKey, err := parseEncryptionKey(downloadSigningKeyEnvVar, "DOWNLOAD_SIGNING_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		PawPalAPIKey:               envPawPalAPIKey,
 		AppOrigin:                  appOrigin,
@@ -102,6 +122,7 @@ func Parse(environment map[string]string, workingDirectory string) (Config, erro
 		MaxPublicProductResults:    MaxPublicProductResults,
 		ActiveEncryptionKeyVersion: activeEncryptionKeyVersion,
 		EncryptionKeys:             encryptionKeys,
+		DownloadSigningKey:         downloadSigningKey,
 	}, nil
 }
 
@@ -116,15 +137,23 @@ func ParseAttackerLab(environment map[string]string) (AttackerLabConfig, error) 
 	return AttackerLabConfig{Port: port}, nil
 }
 
-func processEnvironment() map[string]string {
-	environment := make(map[string]string)
-	for _, entry := range os.Environ() {
+func loadEnvironment(workingDirectory string) (map[string]string, error) {
+	environment, err := godotenv.Read(filepath.Join(workingDirectory, ".env"))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) { // If .env exists but there was another error e.g. genuine error reading .env
+			return nil, err
+		}
+	}
+	if environment == nil { // nil is Go zero value for map type; possibly from .env not existing
+		environment = make(map[string]string) // Must initialize new map to write to (can't write to nil map)
+	}
+	for _, entry := range os.Environ() { // Overwrite .env key values with values injected from the process environment (if any were injected)
 		name, value, found := strings.Cut(entry, "=")
 		if found {
 			environment[name] = value
 		}
 	}
-	return environment
+	return environment, nil // Hand back the merged map
 }
 
 func valueOrDefault(environment map[string]string, name, fallback string) string {
