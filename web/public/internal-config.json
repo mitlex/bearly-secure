@@ -1,6 +1,0 @@
-{
-  "environment": "production",
-  "warehouseApiBaseUrl": "http://warehouse.internal:8080",
-  "adminFeatureFlags": ["bulk-tax-import", "remote-image-preview"],
-  "pawPalKeyName": "PAWPAL_API_KEY"
-}
