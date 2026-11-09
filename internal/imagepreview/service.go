@@ -40,14 +40,30 @@ type Service struct {
 	client client
 }
 
+// NewService builds an imagepreview.Service with an HTTP client hardened
+// against SSRF: no proxy discovery, no automatic redirects, and timeouts
+// on every stage of the outbound request.
 func NewService() *Service {
-	return &Service{client: http.DefaultClient}
+	timeout := 5 * time.Second // one shared deadline value for all timeout settings below
+
+	transport := http.Transport{}             // configure connection-level behavior directly, since http.Client doesn't expose these settings
+	transport.ResponseHeaderTimeout = timeout // limits wait time for response headers, so a slow host can't hang the request
+	transport.TLSHandshakeTimeout = timeout   // limits wait time for the TLS handshake with the remote host to complete
+	transport.Proxy = nil                     // disables automatic proxy discovery; this feature should never route through a proxy
+
+	httpClient := http.Client{Transport: &transport} // attach the custom transport so its settings take effect
+	httpClient.Timeout = timeout                     // overall deadline for the full request/response cycle
+	httpClient.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse // don't auto-follow redirects; hand the redirect response back to Fetch to reject
+	}
+
+	return &Service{client: &httpClient} // used by Service.Fetch to make outbound image requests
 }
 
 func (service *Service) Fetch(ctx context.Context, rawURL string, maxBytes int64) (Result, error) {
 	requestedURL, valid := allowedURL(rawURL)
 	if !valid {
-		return Result{}, &Error{Message: "Use an absolute HTTP or HTTPS URL."}
+		return Result{}, &Error{Message: "Use an HTTPS URL from an allowed image host."}
 	}
 	if maxBytes <= 0 {
 		return Result{}, errors.New("maximum image size must be positive")
@@ -56,7 +72,7 @@ func (service *Service) Fetch(ctx context.Context, rawURL string, maxBytes int64
 	defer cancel()
 	request, err := http.NewRequestWithContext(requestContext, http.MethodGet, requestedURL.String(), nil)
 	if err != nil {
-		return Result{}, &Error{Message: "Use an absolute HTTP or HTTPS URL."}
+		return Result{}, &Error{Message: "Use an HTTPS URL from an allowed image host."}
 	}
 	response, err := service.client.Do(request)
 	if err != nil {
@@ -99,7 +115,10 @@ func (service *Service) Fetch(ctx context.Context, rawURL string, maxBytes int64
 
 func allowedURL(rawURL string) (*url.URL, bool) {
 	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+	if err != nil || parsed.Host == "" || parsed.Scheme != "https" {
+		return nil, false
+	}
+	if parsed.User != nil || parsed.Host != "storage.googleapis.com" { // If parsed.User != nil, URL contains credentials -> reject
 		return nil, false
 	}
 	if parsed.Path == "" {
