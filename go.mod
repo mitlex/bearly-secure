@@ -1,6 +1,6 @@
 module github.com/bootdotdev/learn-web-security
 
-go 1.27.0
+go 1.27.3
 
 require (
 	github.com/go-webauthn/webauthn v0.17.4
