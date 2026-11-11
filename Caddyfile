@@ -1,0 +1,16 @@
+# Using the bare domain "bearly-secure.example" makes Caddy manage certificates
+# (obtain and renew) and redirect HTTP to HTTPS automatically.
+bearly-secure.example {
+  # Strict-Transport-Security tells browsers that "bearly-secure.example" should
+  # only be accessed over HTTPS.
+  # max-age=31536000: the browser remembers this rule for one year, but only after
+  # receiving it over HTTPS. A first-ever visit over plain HTTP isn't protected.
+  # includeSubDomains: the rule also applies to every subdomain, so each one must
+  # support HTTPS, or browsers will refuse to load the HTTP-only ones.
+  header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+  # Forward decrypted traffic to the Go app over loopback (same machine), so the
+  # unencrypted hop never touches the network. Caddy also sets X-Forwarded-*
+  # headers, which the app reads based on TRUST_PROXY_HOPS.
+  reverse_proxy 127.0.0.1:3030
+}
