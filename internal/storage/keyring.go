@@ -62,11 +62,62 @@ func (keyring *Keyring) ActiveVersion() string {
 }
 
 func (keyring *Keyring) Encrypt(plaintext []byte) (string, error) {
-	return string(plaintext), nil
+	// Require a configured keyring
+	configuredKeyring, err := requireKeyring(keyring)
+	if err != nil {
+		return "", err
+	}
+
+	// Get active key from keyring; reject missing active key
+	key, exists := configuredKeyring.keys[keyring.ActiveVersion()]
+	if !exists {
+		return "", errors.New("Missing active key on keyring.")
+	}
+
+	encryptedPayload, err := Encrypt(plaintext, key)
+	if err != nil {
+		return "", err
+	}
+
+	// Bundle payload information into a single string for database storage
+	serializedEncryptedPayload, err := serializeEncryptedPayload(versionedEncryptedPayload{
+		KeyVersion: keyring.activeVersion,
+		Nonce:      encryptedPayload.Nonce,
+		AuthTag:    encryptedPayload.AuthTag,
+		Ciphertext: encryptedPayload.Ciphertext,
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return serializedEncryptedPayload, nil
 }
 
 func (keyring *Keyring) Decrypt(serialized string) ([]byte, error) {
-	return []byte(serialized), nil
+	// Require a configured keyring
+	configuredKeyring, err := requireKeyring(keyring)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	deserializedEncryptedPayload, err := deserializeEncryptedPayload(serialized)
+	if err != nil {
+		return []byte{}, err
+	}
+
+	// Get key for key version recorded in payload (not necessarily the keyring's active version);
+	// reject if no key is stored under that key version
+	key, exists := configuredKeyring.keys[deserializedEncryptedPayload.KeyVersion]
+	if !exists {
+		return []byte{}, errors.New("Missing appropriate key for this payload on keyring.")
+	}
+
+	encryptedPayload := EncryptedPayload{
+		Nonce:      deserializedEncryptedPayload.Nonce,
+		AuthTag:    deserializedEncryptedPayload.AuthTag,
+		Ciphertext: deserializedEncryptedPayload.Ciphertext,
+	}
+	return Decrypt(encryptedPayload, key)
 }
 
 func requireKeyring(keyring *Keyring) (*Keyring, error) {
