@@ -1,33 +1,78 @@
 package passwords
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"fmt"
 	"unicode/utf8"
+
+	"golang.org/x/crypto/argon2"
 )
 
-const MaxLength = 128
+const (
+	MaxLength                  = 128
+	argon2idSaltLength         = 16
+	argon2idIterations  uint32 = 2
+	argon2idMemoryKiB   uint32 = 19 * 1024
+	argon2idParallelism uint8  = 1
+	argon2idKeyLength   uint32 = 32
+)
 
 func Hash(password string) (string, error) {
 	if utf8.RuneCountInString(password) > MaxLength {
 		return "", fmt.Errorf("password must not exceed %d characters", MaxLength)
 	}
-	passwordHash := sha256.Sum256([]byte(password))
-	return hex.EncodeToString(passwordHash[:]), nil
+
+	salt := make([]byte, argon2idSaltLength)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
+	derivedKey := argon2.IDKey([]byte(password), salt, argon2idIterations, argon2idMemoryKiB, argon2idParallelism, argon2idKeyLength)
+
+	argon2idHashParts := argon2idHash{
+		version:     argon2.Version,
+		memoryKiB:   argon2idMemoryKiB,
+		iterations:  argon2idIterations,
+		parallelism: argon2idParallelism,
+		salt:        salt,
+		derivedKey:  derivedKey,
+	}
+	return encodeArgon2idHash(argon2idHashParts), nil
 }
 
+// Verify reports whether password (typed at login) matches encodedHash (the user's stored hash from signup).
 func Verify(password, encodedHash string) bool {
+	// Reject passwords over the limit before doing any hashing work.
 	if utf8.RuneCountInString(password) > MaxLength {
 		return false
 	}
-	expectedHash, ok := decodeLegacyHash(encodedHash)
-	if !ok {
+
+	// Legacy path: stored value is a 64-char hex SHA-256 digest from before the Argon2id migration.
+	storedDigest, isLegacy := decodeLegacyHash(encodedHash)
+	if isLegacy {
+		candidateDigest := sha256.Sum256([]byte(password))
+		return subtle.ConstantTimeCompare(candidateDigest[:], storedDigest) == 1
+	}
+
+	// Argon2id path: unpack the stored hash into its recipe (version, params, salt) and stored key.
+	stored, isArgon2id := parseArgon2idHash(encodedHash)
+	if !isArgon2id || stored.version != argon2.Version {
 		return false
 	}
-	candidateHash := sha256.Sum256([]byte(password))
-	return subtle.ConstantTimeCompare(candidateHash[:], expectedHash) == 1
+
+	// Re-derive a candidate key from the typed password using the stored salt and parameters.
+	candidateKey := argon2.IDKey(
+		[]byte(password),
+		stored.salt,
+		stored.iterations,
+		stored.memoryKiB,
+		stored.parallelism,
+		uint32(len(stored.derivedKey)),
+	)
+
+	// Compare the candidate key with the stored key in constant time to prevent remote timing attacks.
+	return subtle.ConstantTimeCompare(candidateKey, stored.derivedKey) == 1
 }
 
 func NeedsRehash(string) bool {
