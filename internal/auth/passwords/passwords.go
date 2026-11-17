@@ -75,6 +75,28 @@ func Verify(password, encodedHash string) bool {
 	return subtle.ConstantTimeCompare(candidateKey, stored.derivedKey) == 1
 }
 
-func NeedsRehash(string) bool {
+func NeedsRehash(encodedHash string) bool {
+	// Legacy path - rehash into Argon2id
+	_, isLegacy := decodeLegacyHash(encodedHash)
+	if isLegacy {
+		return true
+	}
+
+	// Stale Argon2id path - rehash with current Argon2id parameters
+	stored, isArgon2id := parseArgon2idHash(encodedHash)
+	if isArgon2id {
+		if stored.version != argon2.Version ||
+			stored.memoryKiB != argon2idMemoryKiB ||
+			stored.iterations != argon2idIterations ||
+			stored.parallelism != argon2idParallelism ||
+			uint32(len(stored.derivedKey)) != argon2idKeyLength {
+			return true
+		}
+	}
+
+	// Either...
+	// Malformed hash - don't bother putting it through Hash func to rehash it - save compute
+	// Or ...
+	// Hash is in line with current Argon2id parameter constants - no rehash required
 	return false
 }
