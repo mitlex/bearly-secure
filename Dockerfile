@@ -5,7 +5,7 @@
 # do in this stage (source code, go.mod, the compiler itself) lives ONLY here and will
 # be discarded once the build finishes - none of it automatically carries over to the
 # next stage below.
-FROM golang:1.27.0-alpine AS build
+FROM golang:1.27.4-alpine AS build
 
 # Sets the working directory inside THIS stage's filesystem to /src.
 # Every relative path below (like "./") now resolves to /src, not the root.
@@ -98,11 +98,11 @@ COPY attacker-lab/ ./attacker-lab/
 # into /app/web in the image, preserving the folder name.
 COPY web/ ./web/
 
-# Copy the seed PDF file into /app/data/uploads/.
+# Copy the seed PDF file into /app/data/fixtures/.
 # --chown=bearly changes the OWNER of the copied file(s) to the "bearly" user as part
 # of the copy, instead of leaving them owned by root. This matters because the app
 # runs as "bearly" later, and needs permission to read/write these files.
-COPY --chown=bearly data/uploads/mystery-shack-tax-exemption.pdf ./data/uploads/
+COPY --chown=bearly data/fixtures/ ./data/fixtures/
 
 # Switch the active user for all subsequent instructions IN THIS DOCKERFILE (any further
 # RUN/COPY steps would execute as this user too, though we have none left) and for the
