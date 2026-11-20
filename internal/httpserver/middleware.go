@@ -236,10 +236,36 @@ func (limiter *fixedWindowLimiter) reject(responseWriter http.ResponseWriter, re
 	httpx.RespondWithJSON(responseWriter, http.StatusTooManyRequests, map[string]string{"error": "Too many requests"})
 }
 
+// Level 1: runs once per call to fixedWindowRateLimiter(options).
+// It receives the configuration, creates the limiter, and returns the middleware.
 func fixedWindowRateLimiter(options rateLimitOptions) middleware {
-	validateRateLimitOptions(options)
+
+	// Created once per factory call. Every handler wrapped by the returned
+	// middleware (func(next http.Handler) http.Handler) shares this limiter, so counters persist across requests
+	// and across routes. Creating it inside the HandlerFunc below would give
+	// each request an empty limiter that never limits anyone.
+	fwl := newFixedWindowLimiter(options)
+
+	// Level 2: runs once for each handler this middleware wraps.
+	// It captures fwl from Level 1 rather than creating its own.
 	return func(next http.Handler) http.Handler {
-		return next
+
+		// Level 3: runs once per incoming request, possibly concurrently.
+		// Safe because fwl.consume locks countersMutex around its counter updates.
+		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+
+			// Record this request and learn whether the client is over the limit.
+			stateOfRateLimit, reachedLimit := fwl.consume(request)
+			if reachedLimit {
+				// Send the limit response and stop. The next handler never runs.
+				fwl.reject(responseWriter, request, stateOfRateLimit)
+				return
+			}
+
+			// Under the limit: attach the rate limit headers, then continue.
+			setRateLimitHeaders(responseWriter, stateOfRateLimit)
+			next.ServeHTTP(responseWriter, request)
+		})
 	}
 }
 
