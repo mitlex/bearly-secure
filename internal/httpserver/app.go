@@ -33,8 +33,16 @@ import (
 )
 
 const (
-	defaultUploadBytes            = 5 * 1024 * 1024
-	unboundedPublicProductResults = -1
+	defaultUploadBytes                 = 5 * 1024 * 1024
+	unboundedPublicProductResults      = -1
+	loginSourceLimit                   = 20
+	loginSourceLimitResetTime          = 15
+	passwordResetSourceLimit           = 10
+	passwordResetSourceLimitResetTime  = 60
+	loginAccountLimit                  = 5
+	loginAccountLimitResetTime         = 15
+	passwordResetAccountLimit          = 3
+	passwordResetAccountLimitResetTime = 60
 )
 
 type Options struct {
@@ -137,12 +145,6 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 	if err != nil {
 		return nil, err
 	}
-	dynamicMux := http.NewServeMux()
-	dynamicMux.HandleFunc("GET /{$}", storefrontHandler.Storefront)
-	dynamicMux.HandleFunc("GET /search", storefrontHandler.Search)
-	dynamicMux.HandleFunc("GET /products/{id}", storefrontHandler.Product)
-	dynamicMux.HandleFunc("GET /api/account/orders", apiHandler.AccountOrders)
-	dynamicMux.HandleFunc("GET /api/orders/{id}", apiHandler.Order)
 
 	productAPILimiter := fixedWindowRateLimiter(rateLimitOptions{
 		window:  time.Minute,
@@ -153,22 +155,75 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 			httpx.RespondWithJSON(w, http.StatusTooManyRequests, map[string]string{"error": "Too many requests"})
 		},
 	})
-	dynamicMux.Handle("GET /api/products", productAPILimiter(http.HandlerFunc(apiHandler.Products)))
 
+	onLimitErrorPage := func(w http.ResponseWriter, r *http.Request, state rateLimitState) {
+		if err := httpx.RespondWithErrorPage(w, renderer, http.StatusTooManyRequests, "429 Too Many Requests", "Try again later."); err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		}
+	}
+
+	// Call source limiter factory for both login APIs (POST /login; POST /login/totp)
+	// once such that both routes share the same rate limit counters
+	loginAPISourceLimiter := fixedWindowRateLimiter(rateLimitOptions{
+		window:  loginSourceLimitResetTime * time.Minute,
+		maximum: loginSourceLimit,
+		key:     clientIPKeyWithTrustedProxies(options.TrustedProxyHops),
+		onLimit: onLimitErrorPage,
+	})
+	passwordResetAPISourceLimiter := fixedWindowRateLimiter(rateLimitOptions{
+		window:  passwordResetSourceLimitResetTime * time.Minute,
+		maximum: passwordResetSourceLimit,
+		key:     clientIPKeyWithTrustedProxies(options.TrustedProxyHops),
+		onLimit: onLimitErrorPage,
+	})
+	loginAccountLimiter := fixedWindowRateLimiter(rateLimitOptions{
+		window:  loginAccountLimitResetTime * time.Minute,
+		maximum: loginAccountLimit,
+		key:     accountEmailKey,
+		onLimit: onLimitErrorPage,
+	})
+	passwordResetAccountLimiter := fixedWindowRateLimiter(rateLimitOptions{
+		window:  passwordResetAccountLimitResetTime * time.Minute,
+		maximum: passwordResetAccountLimit,
+		key:     accountEmailKey,
+		onLimit: onLimitErrorPage,
+	})
+
+	dynamicMux := http.NewServeMux()
+	dynamicMux.HandleFunc("GET /{$}", storefrontHandler.Storefront)
+	dynamicMux.HandleFunc("GET /search", storefrontHandler.Search)
+	dynamicMux.HandleFunc("GET /products/{id}", storefrontHandler.Product)
+	dynamicMux.HandleFunc("GET /api/account/orders", apiHandler.AccountOrders)
+	dynamicMux.HandleFunc("GET /api/orders/{id}", apiHandler.Order)
+	dynamicMux.Handle("GET /api/products", productAPILimiter(http.HandlerFunc(apiHandler.Products)))
 	dynamicMux.HandleFunc("OPTIONS /api/products", apiHandler.ProductsPreflight)
 	dynamicMux.HandleFunc("GET /api/integrations/warehouse/orders", apiHandler.WarehouseOrders)
 	dynamicMux.Handle("POST /products/{id}/reviews", parseForm(options.MaxRequestBodyBytes, renderer)(http.HandlerFunc(reviewHandler.Create)))
 	dynamicMux.HandleFunc("GET /login", authenticationHandler.LoginPage)
-	dynamicMux.Handle("POST /login", parseForm(options.MaxRequestBodyBytes, renderer)(http.HandlerFunc(authenticationHandler.Login)))
+
+	// Limit logins by source and account
+	loginHandler := http.HandlerFunc(authenticationHandler.Login)
+	loginWithAccountLimit := loginAccountLimiter(loginHandler)
+	loginWithParsedForm := parseForm(options.MaxRequestBodyBytes, renderer)(loginWithAccountLimit)
+	loginWithSourceLimit := loginAPISourceLimiter(loginWithParsedForm)
+	dynamicMux.Handle("POST /login", loginWithSourceLimit)
+
 	dynamicMux.HandleFunc("GET /login/totp", authenticationHandler.TOTPLoginPage)
-	dynamicMux.Handle("POST /login/totp", parseForm(options.MaxRequestBodyBytes, renderer)(http.HandlerFunc(authenticationHandler.TOTPLogin)))
+	dynamicMux.Handle("POST /login/totp", loginAPISourceLimiter(parseForm(options.MaxRequestBodyBytes, renderer)(http.HandlerFunc(authenticationHandler.TOTPLogin))))
 	dynamicMux.HandleFunc("POST /login/totp/cancel", authenticationHandler.CancelTOTPLogin)
 	dynamicMux.HandleFunc("GET /signup", authenticationHandler.SignupPage)
 	dynamicMux.Handle("POST /signup", parseForm(options.MaxRequestBodyBytes, renderer)(http.HandlerFunc(authenticationHandler.Signup)))
 	dynamicMux.HandleFunc("GET /recover-mfa", authenticationHandler.MFARecoveryPage)
 	dynamicMux.Handle("POST /recover-mfa", parseForm(options.MaxRequestBodyBytes, renderer)(http.HandlerFunc(authenticationHandler.RecoverMFA)))
 	dynamicMux.HandleFunc("GET /password-reset", authenticationHandler.PasswordResetRequestPage)
-	dynamicMux.Handle("POST /password-reset", parseForm(options.MaxRequestBodyBytes, renderer)(http.HandlerFunc(authenticationHandler.RequestPasswordReset)))
+
+	// Limit password resets by source and account
+	pwResetHandler := http.HandlerFunc(authenticationHandler.RequestPasswordReset)
+	pwResetWithAccountLimit := passwordResetAccountLimiter(pwResetHandler)
+	pwResetWithParsedForm := parseForm(options.MaxRequestBodyBytes, renderer)(pwResetWithAccountLimit)
+	pwResetWithSourceLimit := passwordResetAPISourceLimiter(pwResetWithParsedForm)
+	dynamicMux.Handle("POST /password-reset", pwResetWithSourceLimit)
+
 	dynamicMux.HandleFunc("GET /password-reset/{token}", authenticationHandler.PasswordResetPage)
 	dynamicMux.Handle("POST /password-reset/{token}", parseForm(options.MaxRequestBodyBytes, renderer)(http.HandlerFunc(authenticationHandler.ResetPassword)))
 	dynamicMux.HandleFunc("POST /logout", authenticationHandler.Logout)

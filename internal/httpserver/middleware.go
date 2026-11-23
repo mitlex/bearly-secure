@@ -301,6 +301,18 @@ func clientIPKeyWithTrustedProxies(trustedProxyHops int) func(*http.Request) str
 	}
 }
 
+// General helper function for account rate limiting
+// WARNING: must run AFTER parseForm. FormValue reads request.PostForm, which
+// is empty until the form is parsed, so otherwise every request silently
+// shares the "" bucket. A repeated email field also maps to "".
+func accountEmailKey(request *http.Request) string {
+	email, err := httpx.FormValue(request, "email")
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
 func boolToInt64(value bool) int64 {
 	if value {
 		return 1
