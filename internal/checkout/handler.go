@@ -1,6 +1,7 @@
 package checkout
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -103,7 +104,7 @@ func (handler *Handler) Submit(responseWriter http.ResponseWriter, request *http
 		handler.renderCheckoutError(responseWriter, request, http.StatusBadRequest, current, items, "All shipping fields are required")
 		return
 	}
-	_, err = acorn.Reserve(request.Context(), acorn.Request{
+	_, err = acorn.ReserveWithTimeout(request.Context(), acorn.Request{
 		Name:       shippingDetails.Name,
 		Address:    shippingDetails.Address,
 		City:       shippingDetails.City,
@@ -111,6 +112,11 @@ func (handler *Handler) Submit(responseWriter http.ResponseWriter, request *http
 		PostalCode: shippingDetails.PostalCode,
 	}, handler.fulfillmentDelay)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			responseWriter.Header().Set("Retry-After", "1")
+			handler.renderCheckoutError(responseWriter, request, http.StatusServiceUnavailable, current, items, "Shipping is temporarily unavailable. Try again shortly.")
+			return
+		}
 		handler.internalError(responseWriter, request, err)
 		return
 	}
