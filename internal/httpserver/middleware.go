@@ -125,10 +125,19 @@ func LoadShedder(_ int, _ int) func(http.Handler) http.Handler {
 	}
 }
 
-func SearchThrottle(_ *templates.Renderer) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return next
-	}
+func SearchThrottle(renderer *templates.Renderer) func(http.Handler) http.Handler {
+	return fixedWindowRateLimiter(rateLimitOptions{
+		window:  time.Second,
+		maximum: 5,
+		key: func(*http.Request) string {
+			return "search"
+		},
+		onLimit: func(w http.ResponseWriter, _ *http.Request, _ rateLimitState) {
+			if err := httpx.RespondWithErrorPage(w, renderer, http.StatusTooManyRequests, "Search Is Busy", "Try again shortly."); err != nil {
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			}
+		},
+	})
 }
 
 type rateLimitCounter struct {
@@ -242,7 +251,7 @@ func fixedWindowRateLimiter(options rateLimitOptions) middleware {
 
 	// Created once per factory call. Every handler wrapped by the returned
 	// middleware (func(next http.Handler) http.Handler) shares this limiter, so counters persist across requests
-	// and across routes. Creating it inside the HandlerFunc below would give
+	// and across any routes wrapped by this same middleware value. Creating it inside the HandlerFunc below would give
 	// each request an empty limiter that never limits anyone.
 	fwl := newFixedWindowLimiter(options)
 
@@ -254,7 +263,7 @@ func fixedWindowRateLimiter(options rateLimitOptions) middleware {
 		// Safe because fwl.consume locks countersMutex around its counter updates.
 		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
 
-			// Record this request and learn whether the client is over the limit.
+			// Record this request and learn whether this request's key is over the limit.
 			stateOfRateLimit, reachedLimit := fwl.consume(request)
 			if reachedLimit {
 				// Send the limit response and stop. The next handler never runs.
