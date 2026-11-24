@@ -33,8 +33,6 @@ import (
 )
 
 const (
-	defaultUploadBytes                 = 5 * 1024 * 1024
-	unboundedPublicProductResults      = -1
 	loginSourceLimit                   = 20
 	loginSourceLimitResetTime          = 15
 	passwordResetSourceLimit           = 10
@@ -107,7 +105,7 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 		accountStore,
 		renderer,
 		logger,
-		unboundedPublicProductResults,
+		options.MaxPublicProductResults,
 	)
 	uploadHandler := uploads.NewHandler(
 		accountStore,
@@ -116,11 +114,11 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 		logger,
 		options.EncryptionKeyring,
 		uploadDirectory,
-		defaultUploadBytes,
+		options.MaxUploadBytes,
 		options.DownloadSigningKey,
 	)
 	adminHandler := admin.NewHandler(admin.NewStore(database), accountStore, renderer, logger, imagepreview.NewService(), options.MaxUploadBytes)
-	apiHandler := api.NewHandler(accountStore, orderStore, productStore, api.NewStore(database), logger, unboundedPublicProductResults)
+	apiHandler := api.NewHandler(accountStore, orderStore, productStore, api.NewStore(database), logger, options.MaxPublicProductResults)
 	assistantHandler := assistant.NewHandler(accountStore, assistant.NewService(orderStore), renderer, logger)
 	supportHandler := support.NewHandler(
 		accountStore,
@@ -130,7 +128,7 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 		logger,
 		options.EncryptionKeyring,
 		filepath.Join(options.DataDirectory, "bulk-tax-documents"),
-		defaultUploadBytes,
+		options.MaxUploadBytes,
 	)
 	authenticationHandler := newAuthHandler(accountStore, mfaStore, passwordResetStore, renderer, logger, options.AppOrigin)
 	passkeyHandler, err := passkeys.NewHandler(
