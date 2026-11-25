@@ -141,13 +141,24 @@ func (handler *Handler) WarehouseOrders(responseWriter http.ResponseWriter, requ
 		return
 	}
 	if !found {
-		httpx.RespondWithJSON(responseWriter, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
+		httpx.RespondWithJSON(responseWriter, http.StatusUnauthorized, map[string]string{"error": "Invalid API key"})
 		return
 	}
 	if apiKey.Scope != "orders:read" { // ensure the key is valid for reading from orders and not something else
-		httpx.RespondWithJSON(responseWriter, http.StatusForbidden, map[string]string{"error": "Forbidden"})
+		httpx.RespondWithJSON(responseWriter, http.StatusForbidden, map[string]string{"error": "API key scope is not allowed"})
 		return
 	}
+	quota, err := handler.apiStore.ConsumeQuota(request.Context(), apiKey.ID)
+	if err != nil {
+		handler.internalError(responseWriter, request, err)
+		return
+	}
+	if !quota.Allowed {
+		RespondWithQuotaExhausted(responseWriter, quota)
+		return
+	}
+	SetQuotaHeaders(responseWriter, quota)
+	quotaResponse := ToQuotaResponse(quota)
 	orders, err := handler.orderStore.ListAll(request.Context())
 	if err != nil {
 		handler.internalError(responseWriter, request, err)
@@ -160,6 +171,7 @@ func (handler *Handler) WarehouseOrders(responseWriter http.ResponseWriter, requ
 	httpx.RespondWithJSON(responseWriter, http.StatusOK, map[string]any{
 		"integration": "Warehouse Fulfillment Integration",
 		"orders":      responses,
+		"quota":       quotaResponse,
 	})
 }
 
