@@ -119,9 +119,38 @@ func recoverPanics(logger *logging.Logger, renderer *templates.Renderer) middlew
 	}
 }
 
-func LoadShedder(_ int, _ int) func(http.Handler) http.Handler {
+func LoadShedder(capacity int, retryDelay int) func(http.Handler) http.Handler {
+	// Check this once when LoadShedder is called at startup.
+	// We want a bad config to blow up once at startup, not on every request.
+	if capacity <= 0 || retryDelay <= 0 {
+		panic("non-positive concurrency capacity or retry delay")
+	}
+
+	// Create a channel that runs once at startup
+	// so all routes share the same capacity.
+	slots := make(chan struct{}, capacity)
+
 	return func(next http.Handler) http.Handler {
-		return next
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-In-Flight-Limit", strconv.Itoa(capacity))
+			select {
+
+			// This runs if the channel has room.
+			// We don't read the values, only count them,
+			// so just input an empty struct (0 bytes).
+			case slots <- struct{}{}:
+
+				// Release the slot when this handler returns, even if next panics.
+				// Without the defer, each panic would permanently shrink capacity.
+				defer func() { <-slots }()
+				next.ServeHTTP(w, r)
+
+			// This runs if the channel is full.
+			default:
+				w.Header().Set("Retry-After", strconv.Itoa(retryDelay))
+				httpx.RespondWithJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Service is at capacity"})
+			}
+		})
 	}
 }
 

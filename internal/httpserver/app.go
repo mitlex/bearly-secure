@@ -284,6 +284,7 @@ func New(database *sql.DB, logger *logging.Logger, options Options) (*Applicatio
 			maximum: 100,
 			key:     clientIPKeyWithTrustedProxies(options.TrustedProxyHops),
 		}),
+		LoadShedder(50, 1),
 		globalSourceValidationMiddleware(options.AppOrigin, renderer),
 	)
 
