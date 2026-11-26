@@ -50,6 +50,15 @@
   {{end -}}
 </div>
 <form method="post" action="/signup" class="auth-form">
+  <label hidden>
+  Leave this field blank
+  <input
+    name="companyWebsite"
+    type="text"
+    tabindex="-1"
+    autocomplete="off"
+  />
+  </label>
   <label
     >Name<input
       name="displayName"
