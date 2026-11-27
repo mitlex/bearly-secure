@@ -3,6 +3,7 @@
 package httpserver
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
@@ -15,10 +16,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/bootdotdev/learn-web-security/internal/httpx"
 	"github.com/bootdotdev/learn-web-security/internal/logging"
 	"github.com/bootdotdev/learn-web-security/internal/templates"
+)
+
+type ctxKey string
+
+const (
+	traceKey ctxKey = "trace"
 )
 
 type middleware func(http.Handler) http.Handler
@@ -336,6 +344,17 @@ func clientIPKeyWithTrustedProxies(trustedProxyHops int) func(*http.Request) str
 			}
 		}
 		return clientIPKey(request)
+	}
+}
+
+func addUUID() middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
+			requestUUID := uuid.NewV4()
+			responseWriter.Header().Set("X-Request-ID", requestUUID.String())
+			ctx := context.WithValue(request.Context(), traceKey, requestUUID)
+			next.ServeHTTP(responseWriter, request.WithContext(ctx))
+		})
 	}
 }
 

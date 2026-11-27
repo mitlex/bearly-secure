@@ -2,9 +2,11 @@ package httpserver
 
 import (
 	"errors"
+	"maps"
 	"net/http"
 	"strings"
 	"unicode/utf8"
+	"uuid"
 
 	"github.com/bootdotdev/learn-web-security/internal/accounts"
 	"github.com/bootdotdev/learn-web-security/internal/auth/mfa"
@@ -29,22 +31,24 @@ type authPage struct {
 }
 
 type authHandler struct {
-	accounts       *accounts.Store
-	renderer       *templates.Renderer
-	logger         *logging.Logger
-	mfa            *mfa.Store
-	passwordResets *passwordreset.Store
-	appOrigin      string
+	accounts         *accounts.Store
+	renderer         *templates.Renderer
+	logger           *logging.Logger
+	mfa              *mfa.Store
+	passwordResets   *passwordreset.Store
+	appOrigin        string
+	trustedProxyHops int
 }
 
-func newAuthHandler(accountStore *accounts.Store, mfaStore *mfa.Store, passwordResetStore *passwordreset.Store, renderer *templates.Renderer, logger *logging.Logger, appOrigin string) *authHandler {
+func newAuthHandler(accountStore *accounts.Store, mfaStore *mfa.Store, passwordResetStore *passwordreset.Store, renderer *templates.Renderer, logger *logging.Logger, appOrigin string, trustedProxyHops int) *authHandler {
 	return &authHandler{
-		accounts:       accountStore,
-		renderer:       renderer,
-		logger:         logger,
-		mfa:            mfaStore,
-		passwordResets: passwordResetStore,
-		appOrigin:      appOrigin,
+		accounts:         accountStore,
+		renderer:         renderer,
+		logger:           logger,
+		mfa:              mfaStore,
+		passwordResets:   passwordResetStore,
+		appOrigin:        appOrigin,
+		trustedProxyHops: trustedProxyHops,
 	}
 }
 
@@ -308,8 +312,39 @@ func (handler *authHandler) internalError(responseWriter http.ResponseWriter, re
 	}
 }
 
-func (handler *authHandler) logAuthenticationEvent(_ *http.Request, eventName string, fields map[string]any) {
-	_ = handler.logger.Event(eventName, fields)
+func (handler *authHandler) logAuthenticationEvent(r *http.Request, eventName string, fields map[string]any) {
+	authEventMap := make(map[string]any)
+
+	// Type assert from any to uuid.UUID so we can format it as a string.
+	// If the assertion fails (ok, ignored with _, is false), we get the
+	// zero UUID (00000000-...) as an acceptable fallback.
+	requestId, _ := r.Context().Value(traceKey).(uuid.UUID)
+	requestIdStr := requestId.String()
+
+	sourceIp := clientIPKeyWithTrustedProxies(handler.trustedProxyHops)
+	sourceIpStr := sourceIp(r)
+
+	userId := fields["userId"]
+
+	// If "success" is missing or isn't a bool, the assertion fails and we
+	// get bool's zero value (false), so unconfirmed events log as "failure".
+	outcome, _ := fields["success"].(bool)
+	outcomeStr := ""
+	if outcome {
+		outcomeStr = "success"
+	} else {
+		outcomeStr = "failure"
+	}
+
+	// Copy caller fields first so our enrichment keys take precedence
+	maps.Copy(authEventMap, fields)
+
+	authEventMap["requestId"] = requestIdStr
+	authEventMap["sourceIp"] = sourceIpStr
+	authEventMap["userId"] = userId
+	authEventMap["outcome"] = outcomeStr
+
+	_ = handler.logger.Event(eventName, authEventMap)
 }
 
 func safeReturnTo(value string) string {
